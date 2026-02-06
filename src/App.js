@@ -7,11 +7,10 @@ const API = "http://localhost:5000/api/gate";
 const FIELDS = [
   { key: "permitNumber", label: "Permit Number" },
   { key: "containerNumber", label: "Container Number" },
-  { key: "containerSize", label: "Container Size" },
-  { key: "containerType", label: "Container Type" },
-  { key: "containerStatus", label: "Container Status" },
   { key: "vehicleNumber", label: "Vehicle Number" },
-  { key: "slineCode", label: "Sline Code" }
+  { key: "gateType", label: "Gate Type" },
+  { key: "gateNo", label: "Gate No" },
+  { key: "photoPath", label: "Photo Path" }
 ];
 
 export default function App() {
@@ -19,7 +18,7 @@ export default function App() {
   const [mismatch, setMismatch] = useState([]);
   const [matched, setMatched] = useState([]);
   const [invalid, setInvalid] = useState([]);
-  const [editing, setEditing] = useState(null); // {rowIdx, field}
+  const [editing, setEditing] = useState(null); // {idx, key}
 
   /* ================= INITIAL LOAD ================= */
   useEffect(() => {
@@ -49,11 +48,8 @@ export default function App() {
   }, []);
 
   /* ================= HELPERS ================= */
-  const hasMismatch = (row, key) => {
-    const c = (row.client[key] || "").toString().trim();
-    const s = (row.soapData?.[key] || "").toString().trim();
-    return c !== s && s !== "";
-  };
+  const isFieldMismatch = (row, key) =>
+    row.mismatches?.some(m => m.field === key);
 
   const updateField = (idx, key, value) => {
     setMismatch(prev => {
@@ -86,20 +82,21 @@ export default function App() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <Tab label={`❌ No Match (${mismatch.length})`} active={tab==="mismatch"} onClick={()=>setTab("mismatch")} />
+        <Tab label={`❌ Mismatch (${mismatch.length})`} active={tab==="mismatch"} onClick={()=>setTab("mismatch")} />
         <Tab label={`✅ Matched (${matched.length})`} active={tab==="matched"} onClick={()=>setTab("matched")} />
         <Tab label={`🚫 Invalid (${invalid.length})`} active={tab==="invalid"} onClick={()=>setTab("invalid")} />
       </div>
 
-      {/* ================= NO MATCH ================= */}
+      {/* ================= MISMATCH ================= */}
       {tab === "mismatch" && mismatch.map((row, idx) => (
         <Card key={idx} title={`Mismatch #${idx+1}`} color="#dc2626" action={() => confirm(row)}>
           <TwoCol>
+
             {/* CTLS */}
             <Col title="CTLS (Editable)">
               {FIELDS.map(f => {
-                const mismatchField = hasMismatch(row, f.key);
-                const isEditing = editing?.idx===idx && editing?.key===f.key;
+                const mismatchField = isFieldMismatch(row, f.key);
+                const isEditing = editing?.idx === idx && editing?.key === f.key;
 
                 return (
                   <Field key={f.key} label={f.label}>
@@ -114,7 +111,7 @@ export default function App() {
                       />
                     ) : (
                       <div
-                        onClick={() => mismatchField && setEditing({idx, key:f.key})}
+                        onClick={() => mismatchField && setEditing({ idx, key: f.key })}
                         style={{
                           border: mismatchField ? "2px solid #ef4444" : "1px solid #ccc",
                           background: mismatchField ? "#fee2e2" : "#fff",
@@ -140,6 +137,7 @@ export default function App() {
                 </Field>
               ))}
             </Col>
+
           </TwoCol>
         </Card>
       ))}
@@ -178,7 +176,7 @@ export default function App() {
   );
 }
 
-/* ================= SMALL UI HELPERS ================= */
+/* ================= UI HELPERS ================= */
 
 const Tab = ({label, active, onClick}) => (
   <button
