@@ -1,224 +1,353 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
 import { socket } from "./socket";
 
-const API = "http://localhost:5000/api/gate";
-
-const FIELDS = [
-  { key: "permitNumber", label: "Permit Number" },
-  { key: "containerNumber", label: "Container Number" },
-  { key: "vehicleNumber", label: "Vehicle Number" },
-  { key: "gateType", label: "Gate Type" },
-  { key: "gateNo", label: "Gate No" },
-  { key: "photoPath", label: "Photo Path" }
-];
+const BASE_URL = "http://10.40.40.208:5000";
 
 export default function App() {
-  const [tab, setTab] = useState("mismatch");
-  const [mismatch, setMismatch] = useState([]);
   const [matched, setMatched] = useState([]);
+  const [mismatch, setMismatch] = useState([]);
   const [invalid, setInvalid] = useState([]);
-  const [editing, setEditing] = useState(null); // {idx, key}
+  const [exception, setException] = useState([]);
 
-  /* ================= INITIAL LOAD ================= */
+  const [tab, setTab] = useState("matched");
+
+  /* ================= LOAD DASHBOARD INIT ================= */
+
   useEffect(() => {
-    async function load() {
-      const mis = await axios.get(`${API}/mismatch`);
-      const mat = await axios.get(`${API}/matched`);
-      const inv = await axios.get(`${API}/invalid`);
-
-      setMismatch(mis.data.data || []);
-      setMatched(mat.data.data || []);
-      setInvalid(inv.data.data || []);
-    }
-    load();
+    loadDashboard();
   }, []);
 
-  /* ================= SOCKET ================= */
+  const loadDashboard = async () => {
+    const res = await fetch(`${BASE_URL}/api/gate/dashboard`);
+    const data = await res.json();
+
+    setMatched(data.filter((d) => d.status === "matched"));
+    setMismatch(data.filter((d) => d.status === "mismatch"));
+    setInvalid(data.filter((d) => d.status === "invalid"));
+    setException(data.filter((d) => d.status === "exception"));
+  };
+
+  /* ================= SOCKET LISTENER ================= */
+
   useEffect(() => {
-    socket.on("gate:mismatch", d => setMismatch(p => [d, ...p]));
-    socket.on("gate:matched", d => setMatched(p => [d, ...p]));
-    socket.on("gate:invalid", d => setInvalid(p => [d, ...p]));
+    socket.on("connect", () => {
+      console.log("🟢 Connected to socket");
+    });
+
+    socket.on("gate:update", (record) => {
+      // Remove existing record if exists
+      removeIfExists(record.id);
+
+      // Push to correct state
+      if (record.status === "matched") setMatched((prev) => [record, ...prev]);
+      else if (record.status === "mismatch")
+        setMismatch((prev) => [record, ...prev]);
+      else if (record.status === "invalid")
+        setInvalid((prev) => [record, ...prev]);
+      else if (record.status === "exception")
+        setException((prev) => [record, ...prev]);
+    });
 
     return () => {
-      socket.off("gate:mismatch");
-      socket.off("gate:matched");
-      socket.off("gate:invalid");
+      socket.off("gate:update");
     };
   }, []);
 
-  /* ================= HELPERS ================= */
-  const isFieldMismatch = (row, key) =>
-    row.mismatches?.some(m => m.field === key);
-
-  const updateField = (idx, key, value) => {
-    setMismatch(prev => {
-      const copy = [...prev];
-      copy[idx].client[key] = value;
-      return copy;
-    });
+  const removeIfExists = (id) => {
+    setMatched((prev) => prev.filter((i) => i.id !== id));
+    setMismatch((prev) => prev.filter((i) => i.id !== id));
+    setInvalid((prev) => prev.filter((i) => i.id !== id));
+    setException((prev) => prev.filter((i) => i.id !== id));
   };
 
-  /* ================= CONFIRM ================= */
-  const confirm = async (row) => {
-    await axios.post(`${API}/validate`, {
-      ...row.client,
-      confirmedByUser: true
-    });
+  /* ================= RENDER TABLE ================= */
 
-    setMismatch(prev => prev.filter(r => r !== row));
-    setMatched(prev => [
-      { client: row.client, soapData: row.soapData, source: "manual" },
-      ...prev
-    ]);
+  const renderTable = (list, status) => {
+    if (!list.length) {
+      return (
+        <div style={styles.emptyState}>
+          <p>No {status} records found</p>
+        </div>
+      );
+    }
 
-    alert("Saved successfully");
+    return (
+      <div style={styles.tableContainer}>
+        <table style={styles.table}>
+          <thead>
+            <tr style={styles.tableHeader}>
+              <th style={styles.th}>Gate Info</th>
+              <th style={styles.th}>Permit Number</th>
+              <th style={styles.th}>CTMS Vehicle</th>
+              <th style={styles.th}>Mapped Container</th>
+              <th style={styles.th}>CCLS Container</th>
+              <th style={styles.th}>CCLS Vehicle</th>
+              <th style={styles.th}>Expiry</th>
+              <th style={styles.th}>LDD</th>
+              <th style={styles.th}>Status</th>
+              {(status === "mismatch" || status === "invalid" || status === "exception") && (
+                <th style={styles.th}>Reason</th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((item, index) => (
+              <tr
+                key={item.id}
+                style={{
+                  ...styles.tableRow,
+                  backgroundColor: index % 2 === 0 ? "#ffffff" : "#f8f9fa",
+                }}
+              >
+                <td style={styles.td}>
+                  <div style={styles.gateInfo}>
+                    <strong>{item.gateType}</strong>
+                    <span style={styles.gateNumber}>Gate {item.gateNo}</span>
+                  </div>
+                </td>
+                <td style={styles.td}>{item.permitNumber || "N/A"}</td>
+                <td style={styles.td}>{item.ctmsVehicleNumber || "N/A"}</td>
+                <td style={styles.td}>{item.mappedContainer || "N/A"}</td>
+                <td style={styles.td}>{item.cclsContainerNumber || "N/A"}</td>
+                <td style={styles.td}>{item.cclsVehicleNumber || "N/A"}</td>
+                <td style={styles.td}>
+                  {item.cclsExpiry
+                    ? new Date(item.cclsExpiry).toLocaleString("en-IN", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })
+                    : "N/A"}
+                </td>
+                <td style={styles.td}>{item.cclsLddFlag || "N/A"}</td>
+                <td style={styles.td}>
+                  <span style={styles.statusBadge(item.status)}>
+                    {item.status.toUpperCase()}
+                  </span>
+                </td>
+                {(status === "mismatch" || status === "invalid" || status === "exception") && (
+                  <td style={{ ...styles.td, color: "#dc3545", fontWeight: "500" }}>
+                    {item.reason || "—"}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   };
 
-  /* ================= UI ================= */
+  const getCurrentList = () => {
+    switch (tab) {
+      case "matched":
+        return { list: matched, status: "matched" };
+      case "mismatch":
+        return { list: mismatch, status: "mismatch" };
+      case "invalid":
+        return { list: invalid, status: "invalid" };
+      case "exception":
+        return { list: exception, status: "exception" };
+      default:
+        return { list: [], status: "" };
+    }
+  };
+
+  const { list, status } = getCurrentList();
+
   return (
-    <div style={{ padding: 16, background: "#eef2ff", minHeight: "100vh" }}>
-      <h2>🚦 Gate Validation Dashboard</h2>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <Tab label={`❌ Mismatch (${mismatch.length})`} active={tab==="mismatch"} onClick={()=>setTab("mismatch")} />
-        <Tab label={`✅ Matched (${matched.length})`} active={tab==="matched"} onClick={()=>setTab("matched")} />
-        <Tab label={`🚫 Invalid (${invalid.length})`} active={tab==="invalid"} onClick={()=>setTab("invalid")} />
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <h1 style={styles.title}>🚦 Live Gate Dashboard</h1>
+        <div style={styles.timestamp}>
+          Last updated: {new Date().toLocaleTimeString()}
+        </div>
       </div>
 
-      {/* ================= MISMATCH ================= */}
-      {tab === "mismatch" && mismatch.map((row, idx) => (
-        <Card key={idx} title={`Mismatch #${idx+1}`} color="#dc2626" action={() => confirm(row)}>
-          <TwoCol>
+      <div style={styles.tabContainer}>
+        <button
+          onClick={() => setTab("matched")}
+          style={tab === "matched" ? styles.tabActive : styles.tab}
+        >
+          <span style={styles.tabIcon}>✓</span>
+          Matched
+          <span style={styles.badge("#28a745")}>{matched.length}</span>
+        </button>
+        <button
+          onClick={() => setTab("mismatch")}
+          style={tab === "mismatch" ? styles.tabActive : styles.tab}
+        >
+          <span style={styles.tabIcon}>⚠</span>
+          Mismatch
+          <span style={styles.badge("#dc3545")}>{mismatch.length}</span>
+        </button>
+        <button
+          onClick={() => setTab("invalid")}
+          style={tab === "invalid" ? styles.tabActive : styles.tab}
+        >
+          <span style={styles.tabIcon}>✕</span>
+          Invalid
+          <span style={styles.badge("#fd7e14")}>{invalid.length}</span>
+        </button>
+        <button
+          onClick={() => setTab("exception")}
+          style={tab === "exception" ? styles.tabActive : styles.tab}
+        >
+          <span style={styles.tabIcon}>!</span>
+          Exception
+          <span style={styles.badge("#6c757d")}>{exception.length}</span>
+        </button>
+      </div>
 
-            {/* CTLS */}
-            <Col title="CTLS (Editable)">
-              {FIELDS.map(f => {
-                const mismatchField = isFieldMismatch(row, f.key);
-                const isEditing = editing?.idx === idx && editing?.key === f.key;
-
-                return (
-                  <Field key={f.key} label={f.label}>
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        defaultValue={row.client[f.key] || ""}
-                        onBlur={e => {
-                          updateField(idx, f.key, e.target.value);
-                          setEditing(null);
-                        }}
-                      />
-                    ) : (
-                      <div
-                        onClick={() => mismatchField && setEditing({ idx, key: f.key })}
-                        style={{
-                          border: mismatchField ? "2px solid #ef4444" : "1px solid #ccc",
-                          background: mismatchField ? "#fee2e2" : "#fff",
-                          padding: 6,
-                          cursor: mismatchField ? "pointer" : "default"
-                        }}
-                      >
-                        {row.client[f.key] || "-"} {mismatchField && "✏️"}
-                      </div>
-                    )}
-                  </Field>
-                );
-              })}
-            </Col>
-
-            {/* CCLS */}
-            <Col title="CCLS (Read Only)">
-              {FIELDS.map(f => (
-                <Field key={f.key} label={f.label}>
-                  <div style={{ background:"#f9fafb", padding:6 }}>
-                    {row.soapData?.[f.key] || "-"}
-                  </div>
-                </Field>
-              ))}
-            </Col>
-
-          </TwoCol>
-        </Card>
-      ))}
-
-      {/* ================= MATCHED ================= */}
-      {tab === "matched" && matched.map((row, idx) => (
-        <Card key={idx} title={`Matched #${idx+1}`} color="#059669">
-          <TwoCol>
-            <Col title="CTLS">
-              {FIELDS.map(f => <div key={f.key}>{row.client[f.key] || "-"}</div>)}
-            </Col>
-            <Col title="CCLS">
-              {FIELDS.map(f => <div key={f.key}>{row.soapData?.[f.key] || "-"}</div>)}
-            </Col>
-          </TwoCol>
-        </Card>
-      ))}
-
-      {/* ================= INVALID ================= */}
-      {tab === "invalid" && invalid.map((row, idx) => (
-        <Card key={idx} title={`🚫 Invalid Permit #${idx+1}`} color="#6b7280">
-          <TwoCol>
-            <Col title="CTLS">
-              {FIELDS.map(f => <div key={f.key}>{row.client[f.key] || "-"}</div>)}
-            </Col>
-            <Col title="CCLS">
-              {FIELDS.map(f => <div key={f.key}>{row.soapData?.[f.key] || "-"}</div>)}
-              <div style={{ color:"#dc2626", marginTop:10, fontWeight:700 }}>
-                Permit Expired
-              </div>
-            </Col>
-          </TwoCol>
-        </Card>
-      ))}
+      {renderTable(list, status)}
     </div>
   );
 }
 
-/* ================= UI HELPERS ================= */
+/* ================= STYLES ================= */
 
-const Tab = ({label, active, onClick}) => (
-  <button
-    onClick={onClick}
-    style={{
-      flex:1,
-      padding:10,
-      fontWeight:600,
-      background: active ? "#1f2937" : "#fff",
-      color: active ? "#fff" : "#374151",
-      borderRadius:6,
-      cursor:"pointer"
-    }}
-  >
-    {label}
-  </button>
-);
-
-const Card = ({title, color, action, children}) => (
-  <div style={{ background:"#fff", marginBottom:16, border:`2px solid ${color}`, borderRadius:8 }}>
-    <div style={{ background:color, color:"#fff", padding:10, display:"flex", justifyContent:"space-between" }}>
-      <span>{title}</span>
-      {action && <button onClick={action}>Confirm & Save</button>}
-    </div>
-    <div style={{ padding:16 }}>{children}</div>
-  </div>
-);
-
-const TwoCol = ({children}) => (
-  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>{children}</div>
-);
-
-const Col = ({title, children}) => (
-  <div>
-    <h4>{title}</h4>
-    {children}
-  </div>
-);
-
-const Field = ({label, children}) => (
-  <div style={{ marginBottom:10 }}>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    {children}
-  </div>
-);
+const styles = {
+  container: {
+    padding: "30px",
+    fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+    backgroundColor: "#f0f2f5",
+    minHeight: "100vh",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "25px",
+  },
+  title: {
+    margin: 0,
+    fontSize: "28px",
+    color: "#1a1a1a",
+    fontWeight: "600",
+  },
+  timestamp: {
+    color: "#6c757d",
+    fontSize: "14px",
+  },
+  tabContainer: {
+    display: "flex",
+    gap: "10px",
+    marginBottom: "25px",
+    borderBottom: "2px solid #dee2e6",
+    paddingBottom: "0",
+  },
+  tab: {
+    padding: "12px 24px",
+    border: "none",
+    backgroundColor: "transparent",
+    cursor: "pointer",
+    fontSize: "15px",
+    fontWeight: "500",
+    color: "#6c757d",
+    borderBottom: "3px solid transparent",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    position: "relative",
+    bottom: "-2px",
+  },
+  tabActive: {
+    padding: "12px 24px",
+    border: "none",
+    backgroundColor: "#ffffff",
+    cursor: "pointer",
+    fontSize: "15px",
+    fontWeight: "600",
+    color: "#1a1a1a",
+    borderBottom: "3px solid #0d6efd",
+    borderTopLeftRadius: "6px",
+    borderTopRightRadius: "6px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    position: "relative",
+    bottom: "-2px",
+  },
+  tabIcon: {
+    fontSize: "16px",
+  },
+  badge: (bgColor) => ({
+    backgroundColor: bgColor,
+    color: "#ffffff",
+    padding: "2px 8px",
+    borderRadius: "12px",
+    fontSize: "12px",
+    fontWeight: "600",
+    marginLeft: "6px",
+  }),
+  tableContainer: {
+    backgroundColor: "#ffffff",
+    borderRadius: "8px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+    overflow: "hidden",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "14px",
+  },
+  tableHeader: {
+    backgroundColor: "#f8f9fa",
+    borderBottom: "2px solid #dee2e6",
+  },
+  th: {
+    padding: "16px 12px",
+    textAlign: "left",
+    fontWeight: "600",
+    color: "#495057",
+    fontSize: "13px",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+  },
+  tableRow: {
+    borderBottom: "1px solid #dee2e6",
+    transition: "background-color 0.15s ease",
+  },
+  td: {
+    padding: "14px 12px",
+    color: "#212529",
+    verticalAlign: "middle",
+  },
+  gateInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  gateNumber: {
+    fontSize: "12px",
+    color: "#6c757d",
+  },
+  statusBadge: (status) => ({
+    padding: "6px 12px",
+    borderRadius: "4px",
+    fontSize: "11px",
+    fontWeight: "600",
+    letterSpacing: "0.5px",
+    display: "inline-block",
+    color: "#ffffff",
+    backgroundColor:
+      status === "matched"
+        ? "#28a745"
+        : status === "mismatch"
+        ? "#dc3545"
+        : status === "invalid"
+        ? "#fd7e14"
+        : status === "exception"
+        ? "#6c757d"
+        : "#0d6efd",
+  }),
+  emptyState: {
+    backgroundColor: "#ffffff",
+    borderRadius: "8px",
+    padding: "60px 20px",
+    textAlign: "center",
+    color: "#6c757d",
+    fontSize: "16px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+  },
+};
